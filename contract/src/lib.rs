@@ -1,11 +1,15 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::{near_bindgen, AccountId};
+use near_sdk::serde::{Serialize, Deserialize};
+use near_sdk::{near_bindgen, AccountId, env, Promise};
 use near_sdk::collections::{UnorderedMap};
-use near_sdk::env::{state_exists, panic_str};
+
+/// converts the given number to yocto
+fn to_yocto(num: u128) -> u128 { num * (1e24 as u128) }
 
 /// treasure boards can be : Small (2 x 2), Medium (4 x 4) or Big (6 x 6)
-#[derive(BorshDeserialize, BorshSerialize)]
-enum BoardSize {
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Copy)]
+#[serde(crate = "near_sdk::serde")]
+pub enum BoardSize {
     Small = 4,
     Medium = 16,
     Big = 36
@@ -13,7 +17,6 @@ enum BoardSize {
 
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct TreasureBoard {
-    id: u128,
     creator: AccountId,
     size: BoardSize,
     answer_hash: String,
@@ -31,30 +34,41 @@ pub struct NearTreasureBoardGame {
 impl NearTreasureBoardGame {
     #[init]
     pub fn new() -> Self {
-        if state_exists() {
-            panic_str("The contract has already been initialized");
+        if env::state_exists() {
+            env::panic_str("The contract has already been initialized");
         } else {
             Self {
-                boards: UnorderedMap::new(b"A"),
+                boards: UnorderedMap::new(b"B"),
                 next_index: 1_u128
             }
         }
+    }
+
+    #[payable]
+    pub fn new_game(&mut self, size: BoardSize, answer_hash: String) {
+        let creator = env::predecessor_account_id();
+        let prize = env::attached_deposit();
+
+        // reject request if the attached funds are insufficient to cover the game
+        if prize < to_yocto(size as u128) {
+            env::panic_str("Attached deposit is not sufficient for a game of this size")
+        }
+
+        // add new game to state
+        self.boards.insert(&self.next_index, &TreasureBoard {
+            creator,
+            size,
+            answer_hash,
+            answers: UnorderedMap::new(b"A")
+        });
+
+        self.next_index += 1;
+
+        // keep the prize inside contract account
+        Promise::new(env::current_account_id()).transfer(prize);
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use near_sdk::test_utils::{get_logs, VMContextBuilder};
-    use near_sdk::{testing_env, AccountId};
-
-    /// returns mock context
-    fn get_context(predecessor: AccountId) -> VMContextBuilder {
-        let mut builder = VMContextBuilder::new();
-        builder.predecessor_account_id(predecessor);
-        builder
-    }
-
-    // TESTS HERE
-}
+mod tests;
