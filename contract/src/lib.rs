@@ -1,6 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{near_bindgen, AccountId};
 use near_sdk::collections::{UnorderedMap};
+use near_sdk::env::{state_exists, panic_str};
 
 /// treasure boards can be : Small (2 x 2), Medium (4 x 4) or Big (6 x 6)
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -20,14 +21,25 @@ pub struct TreasureBoard {
 }
 
 #[near_bindgen]
-#[derive(Default, BorshDeserialize, BorshSerialize)]
-pub struct NearTreasureBoard {
-    // CONTRACT STATE
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct NearTreasureBoardGame {
+    boards: UnorderedMap<u128, TreasureBoard>,
+    next_index: u128
 }
 
 #[near_bindgen]
-impl NearTreasureBoard {
-    // CONTRACT METHODS
+impl NearTreasureBoardGame {
+    #[init]
+    pub fn new() -> Self {
+        if state_exists() {
+            panic_str("The contract has already been initialized");
+        } else {
+            Self {
+                boards: UnorderedMap::new(b"A"),
+                next_index: 1_u128
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
