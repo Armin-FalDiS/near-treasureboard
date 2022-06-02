@@ -43,5 +43,7 @@ fn newgame() {
 
     let mut contract = get_contract();
 
-    contract.new_game(BoardSize::Small, String::from("WeiredHash"));
+    contract.new_game(BoardSize::Small, String::from("MyHash"));
+
+    assert_eq!(contract.games()[0].answer_hash, "MyHash");
 }
