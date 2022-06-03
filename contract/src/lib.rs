@@ -41,6 +41,13 @@ pub struct NearTreasureBoardGame {
 
 #[near_bindgen]
 impl NearTreasureBoardGame {
+    pub fn default() -> Self {
+        Self {
+            boards: UnorderedMap::new(b"B"),
+            next_index: 1_u128
+            }
+    }
+
     #[init]
     pub fn new() -> Self {
         if env::state_exists() {
@@ -61,7 +68,7 @@ impl NearTreasureBoardGame {
 
         // reject request if the attached funds are insufficient to cover the game
         if prize < to_yocto(size as u128) {
-            env::panic_str("Attached deposit is not sufficient for a game of this size")
+            env::panic_str("Attached deposit is not sufficient to create a board of this size")
         }
 
         // add new game to state
@@ -83,7 +90,6 @@ impl NearTreasureBoardGame {
 
     /// extract all treasure boards and return them
     pub fn games(&self) -> Vec<TreasureBoard> {
-        
         let mut boards: Vec<TreasureBoard> = Vec::new();
 
         for b in self.boards.iter() {
@@ -91,6 +97,40 @@ impl NearTreasureBoardGame {
         }
 
         boards
+    }
+
+    /// reserves a slot on the treasure board for the user
+    #[payable]
+    pub fn play(&mut self, id: u128, choice: u8) {
+        let game = self.boards.get(&id);
+
+        match game {
+            None => { env::panic_str("No such a game exists"); }
+            Some(mut game) => {
+                // check if answer is acceptable
+                if choice < (game.size as u8) {
+                    for a in game.answers.values() {
+                        // reject duplicate choice
+                        if a == choice {
+                            env::panic_str("That slot has already been taken")
+                        }
+                    }
+                }
+
+                let cost = env::attached_deposit();
+
+                // check if enough money is attached
+                if cost < to_yocto(1) {
+                    env::panic_str("Attached deposit is insufficient to play");
+                }
+
+                // reserve slot on the board for user
+                game.answers.insert(&env::predecessor_account_id(), &choice);
+
+                // put the deposit into contract account
+                Promise::new(env::current_account_id()).transfer(cost);
+            }
+        }
     }
 }
 
