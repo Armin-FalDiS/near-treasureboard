@@ -81,15 +81,13 @@ impl NearTreasureBoardGame {
         Promise::new(env::current_account_id()).transfer(prize);
     }
 
-    /// extract OPEN treasure boards and return them
+    /// extract all treasure boards and return them
     pub fn games(&self) -> Vec<TreasureBoard> {
         
         let mut boards: Vec<TreasureBoard> = Vec::new();
 
         for b in self.boards.iter() {
-            if !b.1.closed() {
-                boards.push(b.1);
-            }
+            boards.push(b.1);
         }
 
         boards
