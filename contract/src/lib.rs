@@ -8,6 +8,17 @@ fn to_yocto(num: u128) -> u128 {
     num * (1e24 as u128)
 }
 
+/// converts u128 to byte array
+fn to_bytearray(num: u128) -> [u8; 16] {
+    let mut arr = [0_u8; 16];
+
+    for i in 0..16 {
+        arr[15 - i] = ((num >> (8 * i)) & 0xff) as u8;
+    }
+
+    arr
+}
+
 /// treasure boards can be : Small (2 x 2), Medium (4 x 4) or Big (6 x 6)
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Copy)]
 #[serde(crate = "near_sdk::serde")]
@@ -22,7 +33,7 @@ pub struct TreasureBoard {
     creator: AccountId,
     size: BoardSize,
     answer_hash: String,
-    answers: UnorderedMap<AccountId, u8>,
+    answers: UnorderedMap<u8, AccountId>,
 }
 
 impl TreasureBoard {
@@ -44,8 +55,17 @@ impl NearTreasureBoardGame {
     pub fn default() -> Self {
         Self {
             boards: UnorderedMap::new(b"B"),
-            next_index: 1_u128
-            }
+            next_index: 1_u128,
+        }
+    }
+
+    // returns a copy of the treasure board
+    fn get_game(&self, id: u128) -> TreasureBoard {
+        // check whether a game exists with the given id
+        match self.boards.get(&id) {
+            None => env::panic_str("No such a game exists"),
+            Some(game) => game,
+        }
     }
 
     #[init]
@@ -66,7 +86,7 @@ impl NearTreasureBoardGame {
         let creator = env::predecessor_account_id();
         let prize = env::attached_deposit();
 
-        // reject request if the attached funds are insufficient to cover the game
+        // reject request if the attached funds are insufficient
         if prize < to_yocto(size as u128) {
             env::panic_str("Attached deposit is not sufficient to create a board of this size")
         }
@@ -78,7 +98,7 @@ impl NearTreasureBoardGame {
                 creator,
                 size,
                 answer_hash,
-                answers: UnorderedMap::new(b"A"),
+                answers: UnorderedMap::new(to_bytearray(self.next_index).to_vec()),
             },
         );
 
@@ -88,49 +108,46 @@ impl NearTreasureBoardGame {
         Promise::new(env::current_account_id()).transfer(prize);
     }
 
-    /// extract all treasure boards and return them
+    /// return all treasure boards
     pub fn games(&self) -> Vec<TreasureBoard> {
-        let mut boards: Vec<TreasureBoard> = Vec::new();
-
-        for b in self.boards.iter() {
-            boards.push(b.1);
-        }
-
-        boards
+        self.boards.values_as_vector().to_vec()
     }
 
     /// reserves a slot on the treasure board for the user
     #[payable]
     pub fn play(&mut self, id: u128, choice: u8) {
-        let game = self.boards.get(&id);
+        let mut game = self.get_game(id);
 
-        match game {
-            None => { env::panic_str("No such a game exists"); }
-            Some(mut game) => {
-                // check if answer is acceptable
-                if choice < (game.size as u8) {
-                    for a in game.answers.values() {
-                        // reject duplicate choice
-                        if a == choice {
-                            env::panic_str("That slot has already been taken")
-                        }
-                    }
-                }
-
-                let cost = env::attached_deposit();
-
-                // check if enough money is attached
-                if cost < to_yocto(1) {
-                    env::panic_str("Attached deposit is insufficient to play");
-                }
-
-                // reserve slot on the board for user
-                game.answers.insert(&env::predecessor_account_id(), &choice);
-
-                // put the deposit into contract account
-                Promise::new(env::current_account_id()).transfer(cost);
-            }
+        // check whether the game is closed
+        if game.closed() {
+            env::panic_str("This board is closed");
         }
+
+        // check if answer is within the acceptable range
+        if choice >= (game.size as u8) {
+            env::panic_str("The choice is out of the bounds of this board");
+        }
+
+        // reject duplicate choices
+        if game.answers.get(&choice) != None {
+                env::panic_str("That slot has already been taken")
+        }
+
+        let cost = env::attached_deposit();
+
+        // check if enough money is attached
+        if cost < to_yocto(1) {
+            env::panic_str("Attached deposit is insufficient to play");
+        }
+
+        // reserve slot on the board for the player
+        game.answers.insert(&choice, &env::predecessor_account_id());
+
+        // put the deposit into contract account
+        Promise::new(env::current_account_id()).transfer(cost);
+
+        // update the board
+        self.boards.insert(&id, &game);
     }
 }
 

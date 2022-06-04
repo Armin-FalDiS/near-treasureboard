@@ -15,23 +15,10 @@ fn get_context(current: AccountId, predecessor: AccountId, deposit: Balance) -> 
 /// returns fake account for test
 fn get_account(name: &str) -> AccountId { AccountId::new_unchecked(String::from(name)) }
 
-#[test]
-#[should_panic(expected = "Attached deposit is not sufficient to create a board of this size")]
-fn newgame_low_funds() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
-
-    testing_env!(context);
-
-    let mut contract = NearTreasureBoardGame::default();
-
-    contract.new_game(BoardSize::Big, String::from("WeiredHash"));
-}
 
 #[test]
 fn newgame() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
-
-    testing_env!(context);
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
 
     let mut contract = NearTreasureBoardGame::default();
 
@@ -41,11 +28,34 @@ fn newgame() {
 }
 
 #[test]
-#[should_panic(expected = "No such a game exists")]
-fn play_invalid_game() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(1));
+#[should_panic(expected = "Attached deposit is not sufficient to create a board of this size")]
+fn newgame_low_funds() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
+
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.new_game(BoardSize::Big, String::from("WeiredHash"));
+}
+
+#[test]
+fn play() {
+    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
 
     testing_env!(context);
+
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.new_game(BoardSize::Small, String::from("MyHash"));
+
+    contract.play(1, 0);
+
+    assert_eq!(contract.get_game(1).answers.get(&0).unwrap(), get_account("armin.near"));
+}
+
+#[test]
+#[should_panic(expected = "No such a game exists")]
+fn play_invalid_game() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(1)));
 
     let mut contract = NearTreasureBoardGame::default();
 
@@ -55,33 +65,42 @@ fn play_invalid_game() {
 #[test]
 #[should_panic(expected = "That slot has already been taken")]
 fn play_duplicate() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
-
-    testing_env!(context);
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
 
     let mut contract = NearTreasureBoardGame::default();
 
     contract.new_game(BoardSize::Small, String::from("MyHash"));
 
     contract.play(1, 1);
-
     contract.play(1, 1);
 }
 
 #[test]
 #[should_panic(expected = "Attached deposit is insufficient")]
 fn play_low_fund() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
 
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.new_game(BoardSize::Small, String::from("MyHash"));
+
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("ethuil.near"), to_yocto(0)));
+
+    contract.play(1, 1);
+}
+
+#[test]
+#[should_panic(expected = "This board is closed")]
+fn play_closed_game() {
+    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
     testing_env!(context);
 
     let mut contract = NearTreasureBoardGame::default();
 
     contract.new_game(BoardSize::Small, String::from("MyHash"));
 
-    let context = get_context(get_account("treasureboard.near"), get_account("ethuil.near"), to_yocto(0));
-
-    testing_env!(context);
-
+    contract.play(1, 0);
     contract.play(1, 1);
+
+    contract.play(1, 2);
 }
