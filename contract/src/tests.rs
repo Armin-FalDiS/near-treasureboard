@@ -1,5 +1,5 @@
 use super::*;
-use near_sdk::{testing_env, Balance, VMContext};
+use near_sdk::{testing_env, VMContext, Balance, Gas};
 use near_sdk::test_utils::{ VMContextBuilder };
 
 /// returns mock context
@@ -7,7 +7,9 @@ fn get_context(current: AccountId, predecessor: AccountId, deposit: Balance) -> 
     let mut builder = VMContextBuilder::new();
     builder.current_account_id(current);
     builder.predecessor_account_id(predecessor);
+    builder.account_balance(to_yocto(0));
     builder.attached_deposit(deposit);
+    builder.prepaid_gas(Gas::ONE_TERA * 20);
 
     builder.build()
 }
@@ -22,9 +24,9 @@ fn newgame() {
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Small, String::from("MyHash"));
+    contract.new_game(BoardSize::Small, vec![1, 2, 3, 4]);
 
-    assert_eq!(contract.games()[0].answer_hash, "MyHash");
+    assert_eq!(contract.games()[0].id, 1);
 }
 
 #[test]
@@ -34,18 +36,16 @@ fn newgame_low_funds() {
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Big, String::from("WeiredHash"));
+    contract.new_game(BoardSize::Big, vec![65, 65, 65, 65, 65]);
 }
 
 #[test]
 fn play() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
-
-    testing_env!(context);
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Small, String::from("MyHash"));
+    contract.new_game(BoardSize::Small, vec![65, 65, 65, 65, 65]);
 
     contract.play(1, 0);
 
@@ -69,7 +69,7 @@ fn play_duplicate() {
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Small, String::from("MyHash"));
+    contract.new_game(BoardSize::Small, vec![65, 65, 65, 65, 65]);
 
     contract.play(1, 1);
     contract.play(1, 1);
@@ -82,7 +82,7 @@ fn play_low_fund() {
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Small, String::from("MyHash"));
+    contract.new_game(BoardSize::Small, vec![65, 65, 65, 65, 65]);
 
     testing_env!(get_context(get_account("treasureboard.near"), get_account("ethuil.near"), to_yocto(0)));
 
@@ -92,15 +92,31 @@ fn play_low_fund() {
 #[test]
 #[should_panic(expected = "This board is closed")]
 fn play_closed_game() {
-    let context = get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4));
-    testing_env!(context);
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
 
     let mut contract = NearTreasureBoardGame::default();
 
-    contract.new_game(BoardSize::Small, String::from("MyHash"));
+    contract.new_game(BoardSize::Small, vec![65, 65, 65, 65, 65]);
 
     contract.play(1, 0);
     contract.play(1, 1);
 
     contract.play(1, 2);
+}
+
+#[test]
+fn reveal() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    let solution: Vec<u8> = vec![0, 1, 67, 45, 45, 32, 45, 0];
+
+    contract.new_game(BoardSize::Small, env::sha256(&solution));
+
+
+    contract.play(1, 2);
+    contract.play(1, 3);
+
+    contract.reveal(1, solution);
 }

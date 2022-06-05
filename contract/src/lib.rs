@@ -1,5 +1,6 @@
+use fastrand;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::UnorderedMap;
+use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, Promise};
 
@@ -32,15 +33,24 @@ pub enum BoardSize {
 pub struct TreasureBoard {
     creator: AccountId,
     size: BoardSize,
-    answer_hash: String,
+    solution_hash: Vector<u8>,
     answers: UnorderedMap<u8, AccountId>,
 }
 
 impl TreasureBoard {
     /// return true if the treasure board is closed and not taking any more answers
-    fn closed(&self) -> bool {
+    fn is_closed(&self) -> bool {
         self.answers.len() == (self.size as u64) / 2
     }
+}
+
+/// display struct to return treasure board to the user
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct GameInfo {
+    id: u128,
+    size: BoardSize,
+    answers: Vec<u8>
 }
 
 #[near_bindgen]
@@ -50,15 +60,17 @@ pub struct NearTreasureBoardGame {
     next_index: u128,
 }
 
-#[near_bindgen]
-impl NearTreasureBoardGame {
-    pub fn default() -> Self {
+impl Default for NearTreasureBoardGame {
+    fn default() -> Self {
         Self {
             boards: UnorderedMap::new(b"B"),
             next_index: 1_u128,
         }
     }
+}
 
+#[near_bindgen]
+impl NearTreasureBoardGame {
     // returns a copy of the treasure board
     fn get_game(&self, id: u128) -> TreasureBoard {
         // check whether a game exists with the given id
@@ -69,20 +81,20 @@ impl NearTreasureBoardGame {
     }
 
     #[init]
-    pub fn new() -> Self {
+    pub fn new(start_index: u128) -> Self {
         if env::state_exists() {
             env::panic_str("The contract has already been initialized");
         } else {
             Self {
                 boards: UnorderedMap::new(b"B"),
-                next_index: 1_u128,
+                next_index: start_index,
             }
         }
     }
 
     /// creates a new treasure board of the given size taking NEARs equal to that size
     #[payable]
-    pub fn new_game(&mut self, size: BoardSize, answer_hash: String) {
+    pub fn new_game(&mut self, size: BoardSize, solution_hash: Vec<u8>) {
         let creator = env::predecessor_account_id();
         let prize = env::attached_deposit();
 
@@ -91,26 +103,45 @@ impl NearTreasureBoardGame {
             env::panic_str("Attached deposit is not sufficient to create a board of this size")
         }
 
+        let mut ans_prefix = to_bytearray(self.next_index).to_vec();
+        ans_prefix.extend(b"a");
+        let mut sol_prefix = to_bytearray(self.next_index).to_vec();
+        sol_prefix.extend(b"s");
+
+        let mut solution_hash_vector = Vector::new(sol_prefix);
+        solution_hash_vector.extend(solution_hash);
+
         // add new game to state
         self.boards.insert(
             &self.next_index,
             &TreasureBoard {
                 creator,
                 size,
-                answer_hash,
-                answers: UnorderedMap::new(to_bytearray(self.next_index).to_vec()),
+                solution_hash: solution_hash_vector,
+                answers: UnorderedMap::new(ans_prefix),
             },
         );
 
         self.next_index += 1;
 
         // keep the prize inside contract account
-        Promise::new(env::current_account_id()).transfer(prize);
+        //Promise::new(env::current_account_id()).transfer(prize);
     }
 
     /// return all treasure boards
-    pub fn games(&self) -> Vec<TreasureBoard> {
-        self.boards.values_as_vector().to_vec()
+    pub fn games(&self) -> Vec<GameInfo> {
+        let mut games: Vec<GameInfo> = Vec::new();
+        for (id, board) in self.boards.iter() {
+            games.push(
+                GameInfo {
+                    id,
+                    size: board.size,
+                    answers: board.answers.keys_as_vector().to_vec()
+                }
+            )
+        }
+
+        games
     }
 
     /// reserves a slot on the treasure board for the user
@@ -119,7 +150,7 @@ impl NearTreasureBoardGame {
         let mut game = self.get_game(id);
 
         // check whether the game is closed
-        if game.closed() {
+        if game.is_closed() {
             env::panic_str("This board is closed");
         }
 
@@ -130,7 +161,7 @@ impl NearTreasureBoardGame {
 
         // reject duplicate choices
         if game.answers.get(&choice) != None {
-                env::panic_str("That slot has already been taken")
+            env::panic_str("That slot has already been taken")
         }
 
         let cost = env::attached_deposit();
@@ -144,10 +175,127 @@ impl NearTreasureBoardGame {
         game.answers.insert(&choice, &env::predecessor_account_id());
 
         // put the deposit into contract account
-        Promise::new(env::current_account_id()).transfer(cost);
+        //Promise::new(env::current_account_id()).transfer(cost);
 
         // update the board
         self.boards.insert(&id, &game);
+    }
+
+    pub fn reveal(&mut self, id: u128, solution: Vec<u8>) {
+        let game = self.get_game(id);
+
+        // only the owner can reveal the solution, others will be rejected
+        if game.creator != env::predecessor_account_id() {
+            env::panic_str("Only the creator of the board can reveal the solution");
+        }
+
+        // only a closed game's solution can be revealed, premature reveal will be prevented
+        if !game.is_closed() {
+            env::panic_str("This game is still in progress, cannot reveal prematurely");
+        }
+
+        // check if solution matches the solution_hash
+        if env::sha256(&solution) != game.solution_hash.to_vec() {
+            env::panic_str("Provided solution does not match the originally provided hash");
+        }
+
+        // get the size of the treasure board
+        let tb_size = game.size as usize;
+
+        // check if solution is of valid size
+        if solution.len() < tb_size / 2 {
+            env::panic_str("Provided solution is invalid for a board of this size");
+        }
+
+        // fetch bombs from the solution
+        let bombs = solution[0..tb_size / 2].to_vec();
+
+        // keep track of the amount of tokens taken for game creation
+        let mut remaining_treasure = to_yocto(tb_size as u128);
+
+        // keep track of payments
+        let mut payouts: UnorderedMap<AccountId, u128> = UnorderedMap::new(b"P");
+
+        // spread the tokens used for game creation among free slots
+        for i in 0..tb_size {
+            // flag indicating whether this slot has a bomb in it
+            let is_bombed = bombs.contains(&(i as u8));
+
+            // fetch answer for this slot
+            match game.answers.get(&(i as u8)) {
+                // no players chose this slot
+                None => {
+                    if remaining_treasure > 0 {
+                        // if this slot is NOT bombed, creator gets the treasure
+                        if !is_bombed {
+                            // generate random treasure amount
+                            let treasure = fastrand::u128(0..=remaining_treasure);
+
+                            // add tokens to creator's account
+                            match payouts.get(&game.creator) {
+                                None => {
+                                    payouts.insert(&game.creator, &treasure);
+                                }
+                                Some(creator_balance) => {
+                                    payouts.insert(&game.creator, &(creator_balance + treasure));
+                                }
+                            }
+
+                            // update remaining treasure
+                            remaining_treasure -= treasure;
+                        }
+                    }
+                }
+                // some player did choose this slot
+                Some(player) => {
+                    // if this slot was bombed, creator gets player's tokens
+                    if is_bombed {
+                        match payouts.get(&game.creator) {
+                            None => {
+                                payouts.insert(&game.creator, &to_yocto(1));
+                            }
+                            Some(creator_balance) => {
+                                payouts.insert(&game.creator, &(creator_balance + to_yocto(1)));
+                            }
+                        }
+                    }
+                    // if this slot was NOT bombed, player gets the treasure
+                    else {
+                        if remaining_treasure > 0 {
+                            let treasure = fastrand::u128(0..=remaining_treasure);
+                            // add tokens to player's account
+                            match payouts.get(&player) {
+                                None => {
+                                    payouts.insert(&player, &treasure);
+                                }
+                                Some(player_balance) => {
+                                    payouts.insert(&player, &(player_balance + treasure));
+                                }
+                            }
+
+                            // update remaining treasure
+                            remaining_treasure -= treasure;
+                        }
+                    }
+                }
+            }
+        }
+
+        // check if there is still any treasure left
+        if remaining_treasure > 0 {
+            let lotto_index = fastrand::u64(0..payouts.len());
+            match payouts.to_vec().get(lotto_index as usize) {
+                None => env::panic_str("An error occured during lucky donkey lotto"),
+                Some(lucky_donkey) => {
+                    payouts.insert(&lucky_donkey.0, &(lucky_donkey.1 + remaining_treasure));
+                }
+            }
+        }
+
+        // transfer tokens
+        for p in payouts.iter() {
+            Promise::new(p.0).transfer(p.1);
+        }
     }
 }
 
