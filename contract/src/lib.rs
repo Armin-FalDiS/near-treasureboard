@@ -1,8 +1,8 @@
-use fastrand;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, Promise};
+use fastrand::Rng;
 
 /// converts the given number to yocto
 fn to_yocto(num: u128) -> u128 {
@@ -216,6 +216,16 @@ impl NearTreasureBoardGame {
         // keep track of payments
         let mut payouts: UnorderedMap<AccountId, u128> = UnorderedMap::new(b"P");
 
+        // generate random seed
+        let env_seed = env::random_seed();
+        let mut seed: u64 = 0;
+        for i in 0..8 {
+            seed += env_seed[i] as u64 * (8 ^ i as u64);
+        }
+
+        // init RNG
+        let rng = Rng::with_seed(seed);
+
         // spread the tokens used for game creation among free slots
         for i in 0..tb_size {
             // flag indicating whether this slot has a bomb in it
@@ -229,7 +239,7 @@ impl NearTreasureBoardGame {
                         // if this slot is NOT bombed, creator gets the treasure
                         if !is_bombed {
                             // generate random treasure amount
-                            let treasure = fastrand::u128(0..=remaining_treasure);
+                            let treasure = rng.u128(0..=remaining_treasure);
 
                             // add tokens to creator's account
                             match payouts.get(&game.creator) {
@@ -262,7 +272,7 @@ impl NearTreasureBoardGame {
                     // if this slot was NOT bombed, player gets the treasure
                     else {
                         if remaining_treasure > 0 {
-                            let treasure = fastrand::u128(0..=remaining_treasure);
+                            let treasure = rng.u128(0..=remaining_treasure);
                             // add tokens to player's account
                             match payouts.get(&player) {
                                 None => {
@@ -283,7 +293,7 @@ impl NearTreasureBoardGame {
 
         // check if there is still any treasure left
         if remaining_treasure > 0 {
-            let lotto_index = fastrand::u64(0..payouts.len());
+            let lotto_index = rng.u64(0..payouts.len());
             match payouts.to_vec().get(lotto_index as usize) {
                 None => env::panic_str("An error occured during lucky donkey lotto"),
                 Some(lucky_donkey) => {
