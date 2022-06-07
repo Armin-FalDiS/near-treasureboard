@@ -326,6 +326,9 @@ impl NearTreasureBoardGame {
             log!("{} won {} Nears", &p.0, (p.1 / 1e24 as u128) as f32);
             Promise::new(p.0).transfer(p.1);
         }
+
+        // delete the solved board from the contract state
+        self.boards.remove(&id);
     }
 }
 
