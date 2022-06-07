@@ -29,12 +29,21 @@
     <li>
       <a href="#getting-started">Getting Started</a>
       <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
+        <li><a href="#the-cli">The CLI</a></li>
+        <ul>
+          <li><a href="#prerequisites">Prerequisites</a></li>
+          <li><a href="#installation">Installation</a></li>
+          <li><a href="#usage">Usage</a></li>
+        </ul>
+        <li><a href="#the-smart-contract">The Smart Contract</a></li>
+        <ul>
+          <li><a href="#contract-prerequisites">Prerequisites</a></li>
+          <li><a href="#contract-installation">Installation</a></li>
+          <li><a href="#contract-usage">Usage</a></li>
+          <li><a href="#notes-and-remarks">Notes and Remarks</a></li>
+        </ul>
       </ul>
     </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#notes">Notes and remarks</a></li>
   </ol>
 </details>
 
@@ -96,7 +105,7 @@ Now that you have near-cli up and running, you have to login to a test account w
 By running that command, your browser will open up taking you to a user friendly website allowing you to create your wallet. This is very straight forward. After you have created your wallet, simply enter the id (name) of the created account in the already open terminal.<br>
 Congrats ! Now you have a wallet on NEAR testnet. Do remember your account Id since you will need it later.
 
-### Installation
+#### Installation
 
 1. Clone the repo (Or download zip from github)
    ```
@@ -116,10 +125,60 @@ Congrats ! Now you have a wallet on NEAR testnet. Do remember your account Id si
 
 
 <!-- USAGE EXAMPLES -->
-## Usage
+#### Usage
 
 This is a very simple and straight forward CLI which if you ran successfully should show you a list of actions that you can do by entering the their number. The interface will prompt you to enter information step-by-step and inform you of any errors.<br>
 Happy treasureboarding !!
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
+### The Smart Contract
+
+The smart contract which can be found in the "contract" directory is already deployed to the testnet and the CLI can be utilized to use it so there is no need to redeploy it.
+
+
+#### Contract Prerequisites
+
+To get into the smart contract, you can use rustup which is a installer making it easy to get started with rust. It can can downloaded from [here](https://www.rust-lang.org/learn/get-started). You would also need cargo which is a package(crate?) manager which is included with rustup.
+
+#### Contract Installation
+
+1. Clone the repo (Or download zip from github)
+   ```
+   git clone https://github.com/armin-faldis/near-treasureboard
+   ```
+2. Open a terminal in the "contract" directory
+3. Install cargo packages
+   ```
+   cargo update
+   ```
+5. Add the WebAssembly toolchain if you already haven't
+   ```
+   rustup target add wasm32-unknown-unknown
+   ```
+6. Done. You can now you below cargo to build or test
+   ```
+   cargo build
+   cargo test
+   ```
+7. To generate a wasm file which can be used to deploy to the blockchain use the provided build files
+   ```
+   // Windows
+   build.bat
+   // Linux
+   ./build.sh
+   ```
+   
+<!-- USAGE EXAMPLES -->
+#### Contract Usage
+
+The smart contract can be executed either by unit tests (cargo test) or deploying the generated wasm file to the testnet and using the provided CLI.
+
+#### Notes and Remarks
+
+The smart contract locks NEARs equal to the number of slots on the board which makes creators pay for the storage cost of their game's information by the very prize they deposit upon game creation. This essentially charges players for the staked storage and refunds them (by the prize payout) when the game is finished and the information is removed from the state freeing the storage stake. As such, a seperate mechanism to charge for storage stake is entirely unnecessary.<br>
+Furthermore, the economical logic of this game is as sound as it could be (without KYC). No attempts were made in any part of the code to prevent an account from playing more than once at any given game since obviously they can just make another account. A player can create a game and reserve all the slots and reveal the answer getting their tokens back and burning gas on every transaction or they could reserve half the playable slots which they know are not bombed but since treasure distribution is random they could end up losing all their tokens anyways (none of the other players choose bombed slots).<br>
+All in all, given the fact that there are no possible sure fire ways for someone to always make money in this game coupled with the solution checking mechanism using a hash function makes this game fair to both the creator and the players. 
+
+
+<p align="right">(<a href="#top">back to top</a>)</p>
