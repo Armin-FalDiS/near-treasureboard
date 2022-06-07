@@ -106,11 +106,83 @@ fn play_closed_game() {
 
 #[test]
 fn reveal() {
-    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(6)));
         
     let mut contract = NearTreasureBoardGame::default();
 
     let solution: Vec<u8> = vec![0, 1, 67, 45, 45, 32, 45, 0];
+
+    contract.new_game(BoardSize::Small, env::sha256(&solution));
+
+
+    contract.play(1, 2);
+    contract.play(1, 3);
+
+    contract.reveal(1, solution);
+}
+
+#[test]
+#[should_panic(expected = "No such a game exists")]
+fn reveal_invalid_game() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(0)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.reveal(1, vec![19, 96]);
+}
+
+#[test]
+#[should_panic(expected = "Only the creator of the board can reveal the solution")]
+fn reveal_not_owner() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.new_game(BoardSize::Small, vec![19, 96]);
+
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("faldis.near"), to_yocto(0)));
+
+    contract.reveal(1, vec![19, 96]);
+}
+
+#[test]
+#[should_panic(expected = "This game is still in progress, cannot reveal prematurely")]
+fn reveal_premature() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(4)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    contract.new_game(BoardSize::Small, vec![19, 96]);
+
+    contract.reveal(1, vec![19, 96]);
+}
+
+#[test]
+#[should_panic(expected = "Provided solution does not match the originally provided hash")]
+fn reveal_wrong_solution() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(6)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    let solution: Vec<u8> = vec![0, 1, 67, 45, 45, 32, 45, 0];
+
+    contract.new_game(BoardSize::Small, env::sha256(&solution));
+
+
+    contract.play(1, 2);
+    contract.play(1, 3);
+
+    contract.reveal(1, vec![19, 96]);
+}
+
+#[test]
+#[should_panic(expected = "Provided solution is invalid for a board of this size")]
+fn reveal_invalid_solution() {
+    testing_env!(get_context(get_account("treasureboard.near"), get_account("armin.near"), to_yocto(6)));
+        
+    let mut contract = NearTreasureBoardGame::default();
+
+    let solution: Vec<u8> = vec![3];
 
     contract.new_game(BoardSize::Small, env::sha256(&solution));
 
