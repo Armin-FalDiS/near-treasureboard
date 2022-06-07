@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, near_bindgen, AccountId, Promise};
+use near_sdk::{env, near_bindgen, AccountId, Promise, log};
 use fastrand::Rng;
 
 /// converts the given number to yocto
@@ -103,11 +103,13 @@ impl NearTreasureBoardGame {
             env::panic_str("Attached deposit is not sufficient to create a board of this size")
         }
 
+        // init prefixes for borsh serializer
         let mut ans_prefix = to_bytearray(self.next_index).to_vec();
         ans_prefix.extend(b"a");
         let mut sol_prefix = to_bytearray(self.next_index).to_vec();
         sol_prefix.extend(b"s");
 
+        // save solution hash as bytearray
         let mut solution_hash_vector = Vector::new(sol_prefix);
         solution_hash_vector.extend(solution_hash);
 
@@ -122,10 +124,19 @@ impl NearTreasureBoardGame {
             },
         );
 
+        // increment index
         self.next_index += 1;
 
-        // keep the prize inside contract account
-        //Promise::new(env::current_account_id()).transfer(prize);
+        // closure to get board size as string
+        let size_str = |size: BoardSize| {
+            match size {
+                BoardSize::Small => "small",
+                BoardSize::Medium => "medium",
+                BoardSize::Big => "big"
+            }
+        };
+
+        log!("{} created a new {} treasureboard", env::predecessor_account_id(), size_str(size));
     }
 
     /// return all treasure boards
@@ -174,14 +185,14 @@ impl NearTreasureBoardGame {
         // reserve slot on the board for the player
         game.answers.insert(&choice, &env::predecessor_account_id());
 
-        // put the deposit into contract account
-        //Promise::new(env::current_account_id()).transfer(cost);
-
         // update the board
         self.boards.insert(&id, &game);
+ 
+        log!("{} chose {} on treasureboard #{}", env::predecessor_account_id(), choice, id);
     }
 
     pub fn reveal(&mut self, id: u128, solution: Vec<u8>) {
+        // fetch game
         let game = self.get_game(id);
 
         // only the owner can reveal the solution, others will be rejected
@@ -273,13 +284,13 @@ impl NearTreasureBoardGame {
                     else {
                         if remaining_treasure > 0 {
                             let treasure = rng.u128(0..=remaining_treasure);
-                            // add tokens to player's account
+                            // add treasure to player's account (+ the 1 Near user paid to play)
                             match payouts.get(&player) {
                                 None => {
-                                    payouts.insert(&player, &treasure);
+                                    payouts.insert(&player, &(treasure + to_yocto(1)));
                                 }
                                 Some(player_balance) => {
-                                    payouts.insert(&player, &(player_balance + treasure));
+                                    payouts.insert(&player, &(player_balance + treasure + to_yocto(1)));
                                 }
                             }
 
@@ -302,8 +313,17 @@ impl NearTreasureBoardGame {
             }
         }
 
+        // announce treasure board reveal
+        log!("Treasureboard #{} has been revealed. The bombs were place at:", id);
+
+        // log bomb placement on the blockchain
+        for b in bombs {
+            log!{"{}", b};
+        }
+
         // transfer tokens
         for p in payouts.iter() {
+            log!("{} won {} Nears", &p.0, (p.1 / 1e24 as u128) as f32);
             Promise::new(p.0).transfer(p.1);
         }
     }
