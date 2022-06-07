@@ -43,7 +43,7 @@ async function initNear(accountId) {
 	// load contract
 	const contract = new nearAPI.Contract(
 		account,
-		'dev-1654580401237-76489858696902',
+		'treasure-board.armin-faldis.testnet',
 		{
 			viewMethods: ['games'],
 			changeMethods: ['new_game', 'play', 'reveal'],
