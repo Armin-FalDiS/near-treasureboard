@@ -2,8 +2,7 @@ import * as nearAPI from 'near-api-js';
 import { sha256 } from 'js-sha256';
 import { homedir } from 'os';
 import { join } from 'path';
-import * as inp from 'readline-sync';
-
+import * as input from 'readline-sync';
 
 // init keystore (from .near-credentials)
 const CREDENTIALS_DIR = '.near-credentials';
@@ -19,6 +18,39 @@ const keyStore = new nearAPI.keyStores.UnencryptedFileSystemKeyStore(
  */
 function hash_solution(arr) {
 	return sha256.array(arr);
+}
+
+/**
+ * Validates treasureboard size and returns a valid value
+ * Defaults to Small in case of wrong values
+ * @param {string} size Input size
+ * @returns {string} Validated size
+ */
+function validate_size(size) {
+	size = size.toLowerCase();
+	if (size != 'small' && size != 'medium' && size != 'big') {
+		console.error('\nThat was an invalid size. Defaulting to Small.');
+		size = 'small';
+	}
+
+	return size[0].toUpperCase() + size.substring(1);
+}
+
+/**
+ * @param {string} size Size of the treasureboard
+ * @returns {number} Total number of slots on the treasureboard
+ */
+function get_slots(size) {
+	switch (size) {
+		case 'Small':
+			return 4;
+		case 'Medium':
+			return 16;
+		case 'Big':
+			return 32;
+		default:
+			return 0;
+	}
 }
 
 /**
@@ -55,61 +87,66 @@ async function initNear(accountId) {
 
 /**
  * Fetch all treasureboards
- * @param {string} accountId Id of the account to sign the transaction with
- * @returns {{id: number, size: string, answers: number[]}}
+ * @returns {[{id: number, size: string, answers: number[]}]}
  */
-async function games(accountId) {
+async function games() {
 	let contract = await initNear(accountId);
 
-	return await contract.games({
-		args: {},
-		gas: 40 * 1e12,
-	});
+	return await contract.games({ args: {} });
 }
 
 /**
  * Creates a new treasureboard game
  * @param {string} accountId Id of the account to sign the transaction with
  * @param {string} size Size of the treasure board (Small, Medium, Big)
- * @param {number[]} bombs Placement of the bombs on the board (should contain salt after bomb places)
+ * @param {string} bombs Placement of the bombs on the board (SPACE seperated numbers)
+ * @param {string} salt String to add to the end of bombs securing the generated hash
  * @returns outcome of the functioncall excecution
  */
-async function newGame(accountId, size, bombs) {
+async function newGame(accountId, size, slots, bombs, salt) {
 	let contract = await initNear(accountId);
 
-	// determine size
-	let size_num;
-	switch (size) {
-		case 'Small':
-			size_num = 4;
-			break;
-		case 'Medium':
-			size_num = 16;
-			break;
-		case 'Big':
-			size_num = 32;
-			break;
-		default:
-			size_num = 0;
+	// determine the deposit in yoctoNEARs needed to create a game of this size
+	let deposit_amount = slots + '000000000000000000000000';
+
+	// turn bombs into number array
+	bombs = bombs.split(' ').map((b, i) => {
+		try {
+			let bomb = Number(b);
+			// check if bomb's slot is within bounds
+			if (bomb < 0 || bomb >= slots) throw new Error('Invalid u8');
+			return bomb;
+		} catch (err) {
+			console.error('\nInvalid number given. Defaulting to index');
+			return i;
+		}
+	});
+
+	// bombs should match the size of the board
+	if (bombs.length < slots / 2) {
+		throw new Error(
+			'Number of bombs must match the size of the treasure board',
+		);
 	}
 
-	if (size_num == 0) {
-		throw new Error('Given size is invalid');
-	}
-	if (bombs.length() < size / 2) {
-		throw new Error('Bombs array must match the size');
-	}
+	// add salt to bombs as byte array
+	let buffer = Buffer.from(salt);
+	buffer.forEach((x) => bombs.push(x));
 
-	// hash the solution
-	bombs = hash_solution(bombs);
+	// print plain solution for user
+	console.log(
+		'\n\nThis is the solution which can be used to reveal this treasureboard: \n',
+	);
+	console.log(bombs.reduce((p, c) => p + ' ' + c, ''));
+	console.log('\nSave it somewhere\n\n');
 
 	return await contract.new_game({
 		args: {
 			size: size,
-			solution_hash: bombs,
+			solution_hash: hash_solution(bombs),
 		},
-		gas: 40 * 1e12,
-		amount: size_num,
+		gas: '40000000000000',
+		amount: deposit_amount,
 	});
 }
 
@@ -128,8 +165,8 @@ async function play(accountId, id, choice) {
 			id: id,
 			choice: choice,
 		},
-		gas: 40 * 1e12,
-		amount: 1,
+		gas: '40000000000000',
+		amount: '1000000000000000000000000',
 	});
 }
 
@@ -144,19 +181,21 @@ async function play(accountId, id, choice) {
 async function reveal(accountId, id, solution) {
 	let contract = await initNear(accountId);
 
-	return await contract.play({
+	return await contract.reveal({
 		args: {
 			id: id,
 			solution: solution,
 		},
-		gas: 40 * 1e12,
+		gas: '40000000000000',
 	});
 }
 
-console.log('!!!\t\tWelcome to NEAR-TreasureBoard by Armin FalDiS\t\t!!!');
-console.log('###\t\tPlease login using near-cli before using this tool\t\t###');
+console.log('!!!!!!\tWelcome to NEAR-TreasureBoard by Armin FalDiS');
+console.log('######\tPlease login using near-cli before using this tool');
 
-while(true) {
+let accountId = '';
+
+while (true) {
 	console.log(`
 	Available actions are as followed:
 	\t1. Start a new game
@@ -166,93 +205,130 @@ while(true) {
 	\t0. Exit
 	\n`);
 
-	let action = Number(inp.question('Pick your poison: '));
+	let action = Number(input.question('Pick your poison: ').trim());
 
 	if (action == 0) {
 		break;
 	}
 
-	let accountId = inp.question(
-		'Enter your accountId (you should have already logged-in with near-cli): ',
-	);
+	// view methods don't need a signer
+	if (action != 2) {
+		accountId =
+			input
+				.question(
+					`Enter your accountId${
+						accountId.length ? ' (Leave blank to use ' + accountId + ')' : ''
+					}: `,
+				)
+				.trim() || accountId;
+		if (accountId.length == 0) {
+			console.error(
+				"\nYou've got to have an account ! Sorry, those are the rules friend",
+			);
+			continue;
+		}
+	}
 
 	switch (action) {
 		case 1:
-			let size = inp.question('Choose a size for this game (Small, Medium, Big): ');
-			size = size.toLowerCase();
-			if (size != 'small' || size != 'medium' || size != 'big') {
-				console.error('\nThat was an invalid size. Defaulting to Small.');
-				size = 'small';
-			}
-			size = size[0].toUpperCase() + size.substring(1);
+			let size = input
+				.question('Choose a size for this game (Small, Medium, Big): ')
+				.trim();
 
-			let bombs = inp.question(
-				'Now enter slots that contain bomb followed by some random numbers (numbers between 0-255 seperated by SPACE): ',
-			);
-			bombs = bombs.split(' ').map((b, i) => {
-				try {
-					let bomb = Number(b);
-					if (bomb < 0 || bomb > 255) throw new Error('Invalid u8');
-					return bomb;
-				} catch (err) {
-					console.error('\nInvalid number given. Defaulting to index');
-					return i;
-				}
-			});
+			size = validate_size(size);
+			let slots = get_slots(size);
+
+			console.log('Now enter the number of slots that contain the bombs');
+			let bombs = input
+				.question(
+					`(${slots / 2} numbers between 0-${slots - 1} seperated by SPACE): `,
+				)
+				.trim();
+
+			let salt = input
+				.question('Now enter a password to salt the solution with (UTF8): ')
+				.trim();
 
 			try {
-				console.log(await newGame(accountId, size, bombs));
+				console.log(await newGame(accountId, size, slots, bombs, salt));
 			} catch (err) {
-				console.error(err);
+				console.error(err.message);
 			}
 			break;
 		case 2:
+			let list;
 			try {
-				console.log(await games(accountId));
+				list = await games();
 			} catch (err) {
-				console.error(err);
+				console.error(err.message);
+				break;
+			}
+			if (list && list.length > 0) {
+				let tbl = {};
+				list.forEach((x) => {
+					tbl[x.id] = {
+						'Size': x.size,
+						'Reserved slots':
+							x.answers.length == get_slots(x.size) / 2 ? 'Closed' : x.answers,
+					};
+				});
+				console.table(tbl);
+			} else {
+				console.log('\nThere are currently no games whatsoever!');
+				console.log('*Pro tip: You could create a new one yourself :)');
 			}
 			break;
 		case 3:
-			let play_id = inp.question('Enter the id of the game: ');
-			let choice = inp.question('Which slot do you wish to choose? ');
+			let play_id = input.question('Enter the id of the game: ').trim();
 
-			try {
-				play_id = Number(play_id);
-				choice = Number(choice);
-			} catch (err) {
-				console.error('\nThat was not a valid input !');
-			}
+			let choice = input.question('Which slot do you wish to choose? ').trim();
 
 			if (!isNaN(play_id) && !isNaN(choice)) {
 				try {
-					console.log(await play(accountId, play_id, choice));
+					console.log(await play(accountId, Number(play_id), Number(choice)));
 				} catch (err) {
-					console.error(err);
+					console.error(err.message);
 				}
+			} else {
+				console.error('\nThat was not a valid input !');
 			}
+
 			break;
 		case 4:
-			let reveal_id = inp.question('Enter the id of the game: ');
-			let solution = inp.question(
-				'Now enter solution (The numbers provided during game creation seperated by SPACE): ',
-			);
-			solution = solution.split(' ').map((b, i) => {
+			let reveal_id = input.question('Enter the id of the game: ').trim();
+
+			let solution = input
+				.question(
+					'Now enter solution (The numbers provided during game creation): ',
+				)
+				.trim();
+
+			
+			let invalid_input = false;
+
+			solution = solution.split(' ').map(x => {
 				try {
-					let bomb = Number(b);
-					if (bomb < 0 || bomb > 255) throw new Error('Invalid u8');
-					return bomb;
-				} catch (err) {
-					console.error('\nInvalid number given. Defaulting to index');
-					return i;
+					let s = Number(x);
+					if(s < 0 || s > 255) {
+						invalid_input = true;
+					}
+					return s;
+				} catch {
+					invalid_input = true;
+					return -1;
 				}
 			});
 
-			if(!isNaN(reveal_id)) {
+			if(invalid_input) {
+				console.error('The provided solution is invalid');
+				continue;
+			}
+
+			if (!isNaN(reveal_id)) {
 				try {
-					console.log(await reveal(accountId, reveal_id, solution));
+					console.log(await reveal(accountId, Number(reveal_id), solution));
 				} catch (err) {
-					console.error(err);
+					console.error(err.message);
 				}
 			}
 
