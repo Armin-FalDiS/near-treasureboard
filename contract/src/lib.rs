@@ -1,8 +1,8 @@
+use fastrand::Rng;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, Vector};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, near_bindgen, AccountId, Promise, log};
-use fastrand::Rng;
+use near_sdk::{env, log, near_bindgen, require, AccountId, Promise};
 
 /// converts the given number to yocto
 fn to_yocto(num: u128) -> u128 {
@@ -50,7 +50,7 @@ impl TreasureBoard {
 pub struct GameInfo {
     id: u128,
     size: BoardSize,
-    answers: Vec<u8>
+    answers: Vec<u8>,
 }
 
 #[near_bindgen]
@@ -82,26 +82,27 @@ impl NearTreasureBoardGame {
 
     #[init]
     pub fn new(start_index: u128) -> Self {
-        if env::state_exists() {
-            env::panic_str("The contract has already been initialized");
-        } else {
-            Self {
-                boards: UnorderedMap::new(b"B"),
-                next_index: start_index,
-            }
+        require!(
+            !env::state_exists(),
+            "The contract has already been initialized"
+        );
+
+        Self {
+            boards: UnorderedMap::new(b"B"),
+            next_index: start_index,
         }
     }
 
     /// creates a new treasure board of the given size taking NEARs equal to that size
     #[payable]
     pub fn new_game(&mut self, size: BoardSize, solution_hash: Vec<u8>) {
-        let creator = env::predecessor_account_id();
-        let prize = env::attached_deposit();
+        // reject request if the attached deposit is insufficient
+        require!(
+            env::attached_deposit() >= to_yocto(size as u128),
+            "Attached deposit is not sufficient to create a board of this size"
+        );
 
-        // reject request if the attached funds are insufficient
-        if prize < to_yocto(size as u128) {
-            env::panic_str("Attached deposit is not sufficient to create a board of this size")
-        }
+        let creator = env::predecessor_account_id();
 
         // init prefixes for borsh serializer
         let mut ans_prefix = to_bytearray(self.next_index).to_vec();
@@ -128,28 +129,28 @@ impl NearTreasureBoardGame {
         self.next_index += 1;
 
         // closure to get board size as string
-        let size_str = |size: BoardSize| {
-            match size {
-                BoardSize::Small => "small",
-                BoardSize::Medium => "medium",
-                BoardSize::Big => "big"
-            }
+        let size_str = |size: BoardSize| match size {
+            BoardSize::Small => "small",
+            BoardSize::Medium => "medium",
+            BoardSize::Big => "big",
         };
 
-        log!("{} created a new {} treasureboard", env::predecessor_account_id(), size_str(size));
+        log!(
+            "{} created a new {} treasureboard",
+            env::predecessor_account_id(),
+            size_str(size)
+        );
     }
 
     /// return all treasure boards
     pub fn games(&self) -> Vec<GameInfo> {
         let mut games: Vec<GameInfo> = Vec::new();
         for (id, board) in self.boards.iter() {
-            games.push(
-                GameInfo {
-                    id,
-                    size: board.size,
-                    answers: board.answers.keys_as_vector().to_vec()
-                }
-            )
+            games.push(GameInfo {
+                id,
+                size: board.size,
+                answers: board.answers.keys_as_vector().to_vec(),
+            })
         }
 
         games
@@ -159,36 +160,38 @@ impl NearTreasureBoardGame {
     #[payable]
     pub fn play(&mut self, id: u128, choice: u8) {
         let mut game = self.get_game(id);
-
+        // check if enough money is attached
+        require!(
+            env::attached_deposit() >= to_yocto(1),
+            "Attached deposit is insufficient to play"
+        );
         // check whether the game is closed
-        if game.is_closed() {
-            env::panic_str("This board is closed");
-        }
+        require!(!game.is_closed(), "This board is closed");
 
         // check if answer is within the acceptable range
-        if choice >= (game.size as u8) {
-            env::panic_str("The choice is out of the bounds of this board");
-        }
+        require!(
+            choice < (game.size as u8),
+            "This choice is out of the bounds of this board"
+        );
 
         // reject duplicate choices
-        if game.answers.get(&choice) != None {
-            env::panic_str("That slot has already been taken")
-        }
-
-        let cost = env::attached_deposit();
-
-        // check if enough money is attached
-        if cost < to_yocto(1) {
-            env::panic_str("Attached deposit is insufficient to play");
-        }
+        require!(
+            game.answers.get(&choice) == None,
+            "That slot has already been taken"
+        );
 
         // reserve slot on the board for the player
         game.answers.insert(&choice, &env::predecessor_account_id());
 
         // update the board
         self.boards.insert(&id, &game);
- 
-        log!("{} chose {} on treasureboard #{}", env::predecessor_account_id(), choice, id);
+
+        log!(
+            "{} chose {} on treasureboard #{}",
+            env::predecessor_account_id(),
+            choice,
+            id
+        );
     }
 
     pub fn reveal(&mut self, id: u128, solution: Vec<u8>) {
@@ -196,29 +199,33 @@ impl NearTreasureBoardGame {
         let game = self.get_game(id);
 
         // only the owner can reveal the solution, others will be rejected
-        if game.creator != env::predecessor_account_id() {
-            env::panic_str("Only the creator of the board can reveal the solution");
-        }
+        require!(
+            game.creator == env::predecessor_account_id(),
+            "Only the creator of the board can reveal the solution"
+        );
 
         // only a closed game's solution can be revealed, premature reveal will be prevented
-        if !game.is_closed() {
-            env::panic_str("This game is still in progress, cannot reveal prematurely");
-        }
+        require!(
+            game.is_closed(),
+            "This game is still in progress, cannot reveal prematurely"
+        );
 
         // check if solution matches the solution_hash
-        if env::sha256(&solution) != game.solution_hash.to_vec() {
-            env::panic_str("Provided solution does not match the originally provided hash");
-        }
+        require!(
+            env::sha256(&solution) == game.solution_hash.to_vec(),
+            "Provided solution does not match the originally provided hash"
+        );
 
         // get the size of the treasure board
         let tb_size = game.size as usize;
 
         // check if solution is of valid size
-        if solution.len() < tb_size / 2 {
-            env::panic_str("Provided solution is invalid for a board of this size");
-        }
+        require!(
+            solution.len() >= tb_size / 2,
+            "Provided solution is invalid for a board of this size"
+        );
 
-        // fetch bombs from the solution
+        // fetch bombs from the solution (seperate them from salt)
         let bombs = solution[0..tb_size / 2].to_vec();
 
         // keep track of the amount of tokens taken for game creation
@@ -290,7 +297,10 @@ impl NearTreasureBoardGame {
                                     payouts.insert(&player, &(treasure + to_yocto(1)));
                                 }
                                 Some(player_balance) => {
-                                    payouts.insert(&player, &(player_balance + treasure + to_yocto(1)));
+                                    payouts.insert(
+                                        &player,
+                                        &(player_balance + treasure + to_yocto(1)),
+                                    );
                                 }
                             }
 
@@ -314,16 +324,23 @@ impl NearTreasureBoardGame {
         }
 
         // announce treasure board reveal
-        log!("Treasureboard #{} has been revealed. The bombs were place at:", id);
+        log!(
+            "Treasureboard #{} has been revealed. The bombs were place at:",
+            id
+        );
 
         // log bomb placement on the blockchain
+        let mut bombs_str: String = String::from("");
         for b in bombs {
-            log!{"{}", b};
+            bombs_str.push_str(&b.to_string());
+            bombs_str.push('-');
         }
+        bombs_str.pop();
+        log!(bombs_str);
 
         // transfer tokens
         for p in payouts.iter() {
-            log!("{} won {} Nears", &p.0, (p.1 / 1e24 as u128) as f32);
+            log!("{} won {} Nears", &p.0, (p.1 as f32 / 1e24 as f32));
             Promise::new(p.0).transfer(p.1);
         }
 
